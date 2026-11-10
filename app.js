@@ -13,7 +13,7 @@ const MODELS = {precise:{kind:'flash',fallback:'gemini-flash-latest',label:'Pré
 const GAPI='https://generativelanguage.googleapis.com/v1beta';
 
 /* ---------- local storage ---------- */
-const K = {cols:'coteo.cols', key:'coteo.geminikey', gm:'coteo.gmodels', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
+const K = {ebay:'coteo.ebay', listed:'coteo.listed', cols:'coteo.cols', key:'coteo.geminikey', gm:'coteo.gmodels', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
 function lget(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }
 function lset(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ return false; } }
 try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
@@ -351,10 +351,76 @@ function renderCardSheet(keep){
     ${vs.length>1?`<div class="seg">${vs.map(v=>`<button data-act="shV" data-v="${v}" class="${v===SH.v?'on':''}">${VLAB[v]}</button>`).join('')}</div>`:''}
     <div class="row"><div class="grow"><label class="fld" for="shCol">Collection</label><select id="shCol">${colOptions(SH.col)}</select></div><div><label class="fld">Quantité</label><div class="step"><button data-act="shQ" data-d="-1">−</button><span class="num">${SH.q}</span><button data-act="shQ" data-d="1">+</button></div></div></div>
     <button class="btn pri" style="width:100%" data-act="shAdd">Ajouter · ${eur((price(c,SH.v)||0)*SH.q)}</button>
+    <button class="btn" style="width:100%" data-act="ebay">Créer l'annonce eBay${LISTED[c.id+'|'+SH.v]?` <span class="badge ok">préparée à ${eur(LISTED[c.id+'|'+SH.v].p)}</span>`:''}</button>
     <a class="btn ghost" style="width:100%;text-decoration:none;color:var(--tx)" target="_blank" rel="noopener" href="https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name)}">Voir sur Cardmarket</a>
   </div>`;
   if(keep){ const top=$('#sheet').scrollTop; $('#sheet').innerHTML='<div class="grab"></div>'+html; $('#sheet').scrollTop=top; } else openSheet(html);
 }
+
+
+/* ---------- annonce eBay ---------- */
+const EBDEF={marge:10,min:1,ship:'Envoi soigné : carte protégée par sleeve et toploader, sous enveloppe rigide avec suivi.',cond:'nm',lang:'fr'};
+function ebCfg(){ return Object.assign({},EBDEF,lget(K.ebay,{})); }
+let LISTED=lget(K.listed,{});
+const COND={nm:'Proche du neuf ou mieux',ex:'Légèrement jouée (Excellent)',vg:'Moyennement jouée (Très bon)',po:'Très jouée (Médiocre)'};
+const LANG={fr:['Français','FR'],en:['Anglais','EN'],ja:['Japonais','JAP'],de:['Allemand','DE'],it:['Italien','IT'],es:['Espagnol','ES']};
+const FIN={N:'Normale',H:'Holo',R:'Reverse Holo'};
+function ebRound(p){ if(p<=0) return 0; const r = p<20 ? Math.ceil(p*2)/2-0.01 : Math.ceil(p)-0.01; return Math.round(r*100)/100; }
+function ebSuggest(c,v){ const cfg=ebCfg(); const base=price(c,v); if(base==null) return Math.max(cfg.min,0.99); return Math.max(ebRound(base*(1+cfg.marge/100)), cfg.min); }
+function ebTitle(c,v,lang){
+  const rar = /^(commune|peu commune|sans rarete)$/.test(norm(c.rar)) ? '' : c.rar;
+  let p=[['Carte Pokémon',3],[c.name,0],[c.num+'/'+(c.set.off||'?'),0],[v==='R'?'Reverse':(v==='H'?'Holo':''),1],[rar,4],[c.set.name,2],[(LANG[lang]||LANG.fr)[1],0]].filter(x=>x[0]);
+  let t=p.map(x=>x[0]).join(' ');
+  for(const lvl of [4,3,2,1]){ if(t.length<=80) break; p=p.filter(x=>x[1]!==lvl); t=p.map(x=>x[0]).join(' '); }
+  return t.slice(0,80);
+}
+function ebDesc(c,v,e){ const cfg=ebCfg(); return [
+  `Carte Pokémon à l'unité : ${c.name}`,'',
+  `Série : ${c.set.name} (${c.set.serie}${c.set.date?', '+c.set.date.slice(0,4):''})`,
+  `Numéro : ${c.num}/${c.set.off||'?'}`,
+  c.rar?`Rareté : ${c.rar}`:null,
+  `Version : ${FIN[v]||'Normale'}`,
+  `Langue : ${(LANG[e.lang]||LANG.fr)[0]}`,
+  `État : ${COND[e.cond]}`,'',
+  'La carte envoyée est celle des photos.',
+  cfg.ship||null].filter(x=>x!==null).join('\n').replace(/\n{3,}/g,'\n\n').trim(); }
+function ebSpecs(c,v,e){ return [
+  ['Jeu','Pokémon JCC'],['Personnage',c.name.replace(/[-\s](ex|EX|GX|V|VMAX|VSTAR|LV\.X|BREAK)$/,'')],['Nom de la carte',c.name],['Série',c.set.name],['Numéro de la carte',c.num+'/'+(c.set.off||'?')],
+  ['Rareté',c.rar||'—'],['Finition',v==='R'?'Reverse Holo':(v==='H'?'Holo':'Normale')],['Langue',(LANG[e.lang]||LANG.fr)[0]],['Fabricant','The Pokémon Company'],
+  ['Graduée','Non'],['État de la carte',COND[e.cond]],['Année de fabrication',c.set.date?c.set.date.slice(0,4):'—']]; }
+let EB={};
+function openEbay(){
+  const c=BYID.get(SH.id); const cfg=ebCfg(); const prev=LISTED[c.id+'|'+SH.v];
+  EB={id:c.id,v:SH.v,cond:prev&&prev.cond||cfg.cond,lang:prev&&prev.lang||cfg.lang,p:prev?prev.p:ebSuggest(c,SH.v)};
+  renderEbay(); livePrice(c.id).then(()=>{ if(!prev&&!EB.touched){ EB.p=ebSuggest(c,EB.v); } if($('#ebSheet')) renderEbay(true); });
+}
+function renderEbay(keep){
+  const c=BYID.get(EB.id), cfg=ebCfg(), e=EB;
+  const t=ebTitle(c,e.v,e.lang), d=ebDesc(c,e.v,e), sp=ebSpecs(c,e.v,e);
+  const sold='https://www.ebay.fr/sch/i.html?_nkw='+encodeURIComponent('pokemon '+c.name+' '+c.num+'/'+(c.set.off||''))+'&LH_Sold=1&LH_Complete=1&_sop=13';
+  const base=price(c,e.v);
+  const html=`<div id="ebSheet"><div style="font-size:20px;font-weight:800">Annonce eBay</div><div class="sub" style="margin-bottom:12px">${esc(c.name)} · ${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')} · ${FIN[e.v]}</div>
+  <div class="hero"><div class="row" style="align-items:flex-end"><div class="grow"><div class="sub">Prix de vente</div><div class="row" style="gap:6px"><input id="ebPrice" type="text" inputmode="decimal" value="${String(e.p.toFixed(2)).replace('.',',')}" style="width:130px;font-size:24px;font-weight:800;color:var(--ac);padding:6px 10px"><b style="font-size:22px">€</b></div></div><button class="btn sm" data-act="ebReset">Prix conseillé</button></div>
+  <div class="sub num" style="margin-top:8px;font-size:13px">Cote Cardmarket ${eur(base)}${c.a!=null&&e.v!=='R'?` · moy. 30 j ${eur(c.a)}`:''} + marge ${cfg.marge} % → <b style="color:var(--tx)">${eur(ebSuggest(c,e.v))}</b></div>
+  <a class="btn sm" style="margin-top:10px;text-decoration:none;color:var(--tx)" target="_blank" rel="noopener" href="${sold}">Vérifier les ventes réussies sur eBay ↗</a></div>
+  <div class="row" style="margin-top:12px"><div class="grow"><label class="fld" for="ebCond">État</label><select id="ebCond">${Object.entries(COND).map(([k,l])=>`<option value="${k}" ${k===e.cond?'selected':''}>${l}</option>`).join('')}</select></div><div style="width:120px"><label class="fld" for="ebLang">Langue</label><select id="ebLang">${Object.entries(LANG).map(([k,l])=>`<option value="${k}" ${k===e.lang?'selected':''}>${l[0]}</option>`).join('')}</select></div></div>
+  <div class="stack" style="margin-top:14px">
+    <div class="card"><div class="row"><div class="grow sub">Titre <span class="num">(${t.length}/80)</span></div><button class="btn sm" data-act="ebCopy" data-w="title">Copier</button></div><div style="margin-top:6px;font-weight:600">${esc(t)}</div></div>
+    <div class="card"><div class="row"><div class="grow sub">Description</div><button class="btn sm" data-act="ebCopy" data-w="desc">Copier</button></div><div style="margin-top:6px;white-space:pre-line;font-size:14px">${esc(d)}</div></div>
+    <div class="card"><div class="row"><div class="grow sub">Caractéristiques</div><button class="btn sm" data-act="ebCopy" data-w="specs">Copier</button></div><div style="margin-top:6px;font-size:14px">${sp.map(([k,v])=>`<div class="row" style="justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px solid var(--line)"><span class="sub">${esc(k)}</span><span style="text-align:right">${esc(v)}</span></div>`).join('')}</div></div>
+    <button class="btn" style="width:100%" data-act="ebCopy" data-w="all">Tout copier (titre, prix, description, caractéristiques)</button>
+    <a class="btn pri" style="width:100%;text-decoration:none" target="_blank" rel="noopener" href="https://www.ebay.fr/sl/sell" data-act="ebOpen">Ouvrir eBay pour publier ↗</a>
+    <div class="note">Dans eBay : colle le titre, choisis la catégorie « Cartes Pokémon à l'unité », ajoute tes photos recto/verso, puis colle la description et le prix. La catégorie et les photos se règlent dans eBay.</div>
+    <button class="btn ghost" style="width:100%" data-act="close">Fermer</button>
+  </div></div>`;
+  if(keep&&$('#ebSheet')){ const top=$('#sheet').scrollTop; $('#sheet').innerHTML='<div class="grab"></div>'+html; $('#sheet').scrollTop=top; } else openSheet(html);
+}
+function ebReadPrice(){ const el=$('#ebPrice'); if(!el) return; const v=parseFloat(String(el.value).replace(/\s|€/g,'').replace(',','.')); if(isFinite(v)&&v>0){ EB.p=Math.round(v*100)/100; EB.touched=true; } }
+function ebText(w){ const c=BYID.get(EB.id); ebReadPrice(); const t=ebTitle(c,EB.v,EB.lang), d=ebDesc(c,EB.v,EB), sp=ebSpecs(c,EB.v,EB).map(([k,v])=>k+' : '+v).join('\n');
+  if(w==='title') return t; if(w==='desc') return d; if(w==='specs') return sp;
+  return `TITRE\n${t}\n\nPRIX\n${EB.p.toFixed(2).replace('.',',')} €\n\nDESCRIPTION\n${d}\n\nCARACTÉRISTIQUES\n${sp}`; }
+function ebRemember(){ ebReadPrice(); LISTED[EB.id+'|'+EB.v]={p:EB.p,cond:EB.cond,lang:EB.lang,at:Date.now()}; lset(K.listed,LISTED); }
+async function copyText(txt,label){ try{ await navigator.clipboard.writeText(txt); toast(label+' copié'+(label==='Tout'?'':'')); return true; }catch(e){ openSheet(`<div style="font-weight:800;margin-bottom:8px">Copie manuelle</div><textarea readonly>${esc(txt)}</textarea><button class="btn" style="width:100%;margin-top:10px" data-act="close">Fermer</button>`); return false; } }
 
 /* ---------- settings ---------- */
 function openSettings(){
@@ -365,11 +431,17 @@ function openSettings(){
     <div><label class="fld" for="keyIn">Clé d'API Gemini</label><input type="text" id="keyIn" autocomplete="off" spellcheck="false" placeholder="AIza…" value="${esc(k)}"></div>
     <div class="note">Crée ta clé sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> avec ton compte Google (bouton « Create API key »), puis colle-la ici. Elle reste uniquement sur ce téléphone : ne la partage pas.</div>
     <div><label class="fld">Mode de reconnaissance</label><div class="seg" id="modelSeg">${Object.entries(MODELS).map(([id,o])=>`<button type="button" data-act="setModel" data-m="${id}" class="${id===m?'on':''}">${o.label}</button>`).join('')}</div><div class="sub" style="font-size:12px;margin-top:6px">Précis : Gemini Flash, plus fiable. Économique : Gemini Flash-Lite, plus rapide et avec plus de scans gratuits par jour.</div></div>
-    <div class="row"><button type="button" class="btn grow" data-act="testKey">Tester la clé</button><button class="btn pri grow">Enregistrer</button></div>
+    <div class="row"><button type="button" class="btn grow" data-act="testKey">Tester la clé</button></div>
     <div id="testOut" class="sub"></div>
+    <div style="font-size:17px;font-weight:800;margin-top:8px">Annonces eBay</div>
+    <div class="row"><div class="grow"><label class="fld" for="ebMarge">Marge sur la cote (%)</label><input type="text" inputmode="decimal" id="ebMarge" value="${esc(ebCfg().marge)}"></div><div class="grow"><label class="fld" for="ebMin">Prix minimum (€)</label><input type="text" inputmode="decimal" id="ebMin" value="${esc(String(ebCfg().min).replace('.',','))}"></div></div>
+    <div><label class="fld" for="ebShip">Texte de fin d'annonce (envoi, conditions)</label><textarea id="ebShip" style="min-height:80px">${esc(ebCfg().ship)}</textarea></div>
+    <button class="btn pri" style="width:100%">Enregistrer</button>
     ${k?'<button type="button" class="btn ghost danger" data-act="delKey">Supprimer la clé de ce téléphone</button>':''}
   </form>`);
-  $('#setForm').addEventListener('submit',e=>{ e.preventDefault(); lset(K.key,$('#keyIn').value.trim()); closeSheet(); renderAll(); toast('Réglages enregistrés'); });
+  $('#setForm').addEventListener('submit',e=>{ e.preventDefault(); lset(K.key,$('#keyIn').value.trim());
+    const num=x=>parseFloat(String(x).replace(',','.')); const cfg=ebCfg(); const mg=num($('#ebMarge').value), mn=num($('#ebMin').value);
+    lset(K.ebay,Object.assign(cfg,{marge:isFinite(mg)?mg:cfg.marge,min:isFinite(mn)?mn:cfg.min,ship:$('#ebShip').value.trim()})); closeSheet(); renderAll(); toast('Réglages enregistrés'); });
 }
 async function testKey(){
   const k=$('#keyIn').value.trim(); const out=$('#testOut'); if(!k){ out.textContent='Colle d’abord ta clé.'; return; }
@@ -408,6 +480,8 @@ document.addEventListener('change',e=>{
   if(t.id==='target'){ if(t.value==='__new'){ t.value=validTarget(); newCol(); } else { S.target=t.value; lset(K.target,t.value); } return; }
   if(t.id==='shCol'){ if(t.value==='__new'){ const keep={...SH}; newCol(id=>{ SH=keep; SH.col=id; renderCardSheet(); }); } else SH.col=t.value; return; }
   if(t.id==='sortSel'){ S.sort=t.value; renderCols(); }
+  if(t.id==='ebCond'||t.id==='ebLang'){ ebReadPrice(); EB[t.id==='ebCond'?'cond':'lang']=t.value; renderEbay(true); }
+  if(t.id==='ebPrice'){ ebReadPrice(); }
 });
 let qT; $('#q').addEventListener('input',e=>{ clearTimeout(qT); qT=setTimeout(()=>{ S.q=e.target.value; renderExplore(); },180); });
 document.addEventListener('click',e=>{
@@ -416,6 +490,10 @@ document.addEventListener('click',e=>{
   if(b.tagName==='A') e.preventDefault();
   switch(a){
     case 'close': closeSheet(); break;
+    case 'ebay': openEbay(); break;
+    case 'ebReset': EB.touched=false; EB.p=ebSuggest(BYID.get(EB.id),EB.v); renderEbay(true); break;
+    case 'ebCopy': { const w=b.dataset.w; copyText(ebText(w),{title:'Titre',desc:'Description',specs:'Caractéristiques',all:'Tout'}[w]); ebRemember(); break; }
+    case 'ebOpen': ebRemember(); window.open(b.href,'_blank','noopener'); break;
     case 'settings': openSettings(); break;
     case 'setModel': lset(K.model,b.dataset.m); document.querySelectorAll('#modelSeg button').forEach(x=>x.classList.toggle('on',x===b)); break;
     case 'testKey': testKey(); break;
