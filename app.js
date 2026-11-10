@@ -9,10 +9,11 @@ const norm = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerC
 const normNum = s => String(s||'').toLowerCase().replace(/\s+/g,'').replace(/^#/,'').replace(/^([a-z]*)0+(?=\d)/,'$1');
 const numKey = n => { const m=String(n).match(/\d+/); return m?parseInt(m[0],10):99999; };
 const VLAB = {N:'Normale',H:'Holo',R:'Reverse'};
-const MODELS = {precise:{id:'claude-sonnet-5-5',label:'Précis'}, fast:{id:'claude-haiku-5-5',label:'Économique'}};
+const MODELS = {precise:{kind:'flash',fallback:'gemini-flash-latest',label:'Précis'}, fast:{kind:'flash-lite',fallback:'gemini-flash-lite-latest',label:'Économique'}};
+const GAPI='https://generativelanguage.googleapis.com/v1beta';
 
 /* ---------- local storage ---------- */
-const K = {cols:'coteo.cols', key:'coteo.apikey', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
+const K = {cols:'coteo.cols', key:'coteo.geminikey', gm:'coteo.gmodels', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
 function lget(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }
 function lset(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ return false; } }
 try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
@@ -86,11 +87,49 @@ function renderHeader(){ let v=0; colIds().forEach(id=>v+=colStats(COLS[id]).v);
 function renderTarget(){ S.target=validTarget(); $('#target').innerHTML=colOptions(S.target); }
 function renderFoot(){ $('#foot').innerHTML=`Base de cartes et prix Cardmarket du ${new Date(RAW.date).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}, actualisés en direct quand tu consultes une carte · données <a href="https://tcgdex.dev">TCGdex</a><br>Appli non officielle, non affiliée à Nintendo ni à The Pokémon Company.`; }
 function renderSession(){ $('#sessBox').innerHTML = S.session.n ? `<div class="sess"><div><div class="sub">Cette session</div><div class="num">${S.session.n} carte${S.session.n>1?'s':''} ajoutée${S.session.n>1?'s':''}</div></div><b class="num">${eur(S.session.v)}</b></div>` : ''; }
-function renderKeyNote(){ $('#keyNote').innerHTML = apiKey() ? '' : `<div class="note warn">Pour reconnaître les cartes, ajoute ta clé d'API Anthropic dans les <a href="#" data-act="settings">réglages</a>. La recherche manuelle marche sans clé.</div>`; }
+function renderKeyNote(){ $('#keyNote').innerHTML = apiKey() ? '' : `<div class="note warn">Pour reconnaître les cartes, ajoute ta clé d'API Gemini (gratuite) dans les <a href="#" data-act="settings">réglages</a>. La recherche manuelle marche sans clé.</div>`; }
 
 /* ---------- AI recognition ---------- */
 function apiKey(){ return lget(K.key,''); }
-function modelId(){ const m=lget(K.model,'precise'); return (MODELS[m]||MODELS.precise).id; }
+function modelPref(){ const m=lget(K.model,'precise'); return MODELS[m]?m:'precise'; }
+/* choisit automatiquement le modèle Gemini le plus récent disponible pour cette clé */
+async function discoverModels(key, force){
+  const cache=lget(K.gm,null);
+  if(!force && cache && cache.key===key.slice(-6) && Date.now()-cache.at<7*864e5) return cache;
+  const out={key:key.slice(-6),at:Date.now()};
+  try{
+    const r=await fetch(GAPI+'/models?pageSize=1000',{headers:{'x-goog-api-key':key}});
+    if(!r.ok) return cache||out;
+    const d=await r.json();
+    const best={};
+    (d.models||[]).forEach(m=>{
+      if(!(m.supportedGenerationMethods||[]).includes('generateContent')) return;
+      const id=String(m.name||'').replace(/^models\//,'');
+      const x=id.match(/^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash)$/); if(!x) return;
+      const v=parseFloat(x[1]), k=x[2];
+      if(!best[k]||v>best[k].v) best[k]={v,id};
+    });
+    if(best['flash']) out['flash']=best['flash'].id;
+    if(best['flash-lite']) out['flash-lite']=best['flash-lite'].id;
+    lset(K.gm,out);
+  }catch(e){ return cache||out; }
+  return out;
+}
+async function modelId(key){ const p=MODELS[modelPref()]; const gm=await discoverModels(key); return gm[p.kind]||p.fallback; }
+async function gemini(key, parts, maxTok){
+  const model=await modelId(key);
+  const body={contents:[{role:'user',parts}],generationConfig:{temperature:0.1,maxOutputTokens:maxTok,responseMimeType:'application/json'}};
+  let r;
+  try{ r=await fetch(GAPI+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)}); }
+  catch(e){ const er=new Error('net'); er.code='net'; throw er; }
+  if(!r.ok){ let msg='',st=''; try{ const j=await r.json(); msg=j.error.message||''; st=j.error.status||''; }catch(e){}
+    if(r.status===404) try{ localStorage.removeItem(K.gm); }catch(e){}
+    const er=new Error(msg||('HTTP '+r.status)); er.code=r.status; er.status=st; throw er; }
+  const d=await r.json();
+  const c=(d.candidates||[])[0];
+  if(!c){ const er=new Error((d.promptFeedback&&d.promptFeedback.blockReason)||'réponse vide'); er.code='empty'; throw er; }
+  return ((c.content&&c.content.parts)||[]).filter(p=>p.text&&!p.thought).map(p=>p.text).join('\n');
+}
 function prompt(mode){
   return `You identify Pokémon Trading Card Game cards in a photo. ${mode==='page'?'The photo shows a binder page or several cards: list EVERY card you can see, in reading order (top-left to bottom-right).':mode==='one'?'The photo shows one card; if several are visible, return only the main, centered one.':'The photo may show one card or several: list every card you can see, in reading order.'}
 For each card read carefully:
@@ -106,29 +145,22 @@ For each card read carefully:
 Return ONLY JSON, no prose: {"cards":[{"name_printed":"","name_fr":"","number":"","total":"","set_hint":"","language":"","finish":"","box":[0,0,1,1],"confidence":0}]}. If no card is visible return {"cards":[]}.`;
 }
 function parseLoose(s){ s=String(s||''); const a=s.indexOf('{'), b=s.lastIndexOf('}'); if(a<0||b<a) return null; try{ return JSON.parse(s.slice(a,b+1)); }catch(e){ return null; } }
-async function callClaude(b64, mode){
+async function recognise(b64, mode){
   const key=apiKey(); if(!key){ const e=new Error('nokey'); e.code='nokey'; throw e; }
-  let r;
-  try{
-    r = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:modelId(),max_tokens:mode==='one'?600:2500,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},{type:'text',text:prompt(mode)}]}]})});
-  }catch(e){ const er=new Error('net'); er.code='net'; throw er; }
-  if(!r.ok){ let msg=''; try{ msg=(await r.json()).error.message; }catch(e){} const er=new Error(msg||('HTTP '+r.status)); er.code=r.status; throw er; }
-  const d=await r.json(); const txt=(d.content||[]).filter(x=>x.type==='text').map(x=>x.text).join('\n');
-  const j=parseLoose(txt); return (j&&Array.isArray(j.cards))?j.cards:[];
+  const txt=await gemini(key,[{inline_data:{mime_type:'image/jpeg',data:b64}},{text:prompt(mode)}], mode==='one'?2048:8192);
+  const j=parseLoose(txt); return (j&&Array.isArray(j.cards))?j.cards:(Array.isArray(j)?j:[]);
 }
 function errText(e){
-  const c=e&&e.code;
+  const c=e&&e.code, m=String(e&&e.message||'');
   if(c==='nokey') return 'Ajoute ta clé d’API dans les réglages.';
   if(c==='net') return 'Pas de connexion internet.';
-  if(c===401) return 'Clé d’API refusée : vérifie-la dans les réglages.';
-  if(c===400 && /credit|balance/i.test(e.message)) return 'Crédit épuisé sur ton compte Anthropic.';
-  if(c===429) return 'Trop de scans d’un coup : patiente quelques secondes.';
-  if(c===529||c===503) return 'Service surchargé, réessaie dans un instant.';
-  if(c===404) return 'Modèle indisponible : change de mode dans les réglages.';
-  return 'Analyse impossible ('+(e&&e.message||'erreur')+').';
+  if((c===400&&/api key/i.test(m))||c===401||c===403) return 'Clé d’API refusée : vérifie-la dans les réglages.';
+  if(c===429) return 'Limite gratuite atteinte : patiente une minute (ou jusqu’à demain si c’est la limite du jour).';
+  if(c===503||c===500) return 'Gemini est surchargé, réessaie dans un instant.';
+  if(c===404) return 'Modèle introuvable : réessaie, l’appli va en choisir un autre.';
+  if(c==='empty') return 'Gemini n’a rien renvoyé pour cette photo. Réessaie.';
+  return 'Analyse impossible ('+(m||'erreur')+').';
 }
-
 function matchCard(d){
   const nk=normNum(d.number||''); const tot=parseInt(d.total,10)||null;
   const names=[d.name_fr,d.name_printed].filter(Boolean).map(norm).filter(Boolean);
@@ -157,7 +189,7 @@ async function analyse(cv, mode){
   try{
     const small=scaleCanvas(cv, mode==='one'?1100:1700);
     const b64=small.toDataURL('image/jpeg',.86).split(',')[1];
-    let list=await callClaude(b64,mode);
+    let list=await recognise(b64,mode);
     if(mode==='one') list=list.slice(0,1);
     if(!list.length){ toast('Aucune carte reconnue : rapproche-toi, évite les reflets.'); return []; }
     const batch=Date.now();
@@ -172,7 +204,7 @@ async function analyse(cv, mode){
     items.forEach(r=>{ if(r.pick) livePrice(r.pick).then(()=>{ renderResults(); renderCamLast(); }); });
     renderResults(); renderCamLast();
     return items;
-  }catch(e){ toast(errText(e)); if(e&&e.code===401||e&&e.code==='nokey') setTimeout(openSettings,600); return []; }
+  }catch(e){ toast(errText(e)); if(e&&(e.code==='nokey'||e.code===401||e.code===403||(e.code===400&&/api key/i.test(e.message)))) setTimeout(openSettings,600); return []; }
   finally{ S.busy--; renderBusy(); }
 }
 
@@ -326,13 +358,13 @@ function renderCardSheet(keep){
 
 /* ---------- settings ---------- */
 function openSettings(){
-  const k=apiKey(), m=lget(K.model,'precise');
+  const k=apiKey(), m=modelPref();
   openSheet(`<div style="font-size:20px;font-weight:800;margin-bottom:4px">Réglages</div>
-  <div class="sub" style="margin-bottom:14px">La reconnaissance utilise l'IA Claude avec ta propre clé d'API. Chaque scan est facturé quelques centimes sur ton compte Anthropic.</div>
+  <div class="sub" style="margin-bottom:14px">La reconnaissance utilise l'IA Gemini de Google avec ta propre clé d'API. La clé est gratuite, avec un nombre de scans limité par minute et par jour.</div>
   <form id="setForm" class="stack">
-    <div><label class="fld" for="keyIn">Clé d'API Anthropic</label><input type="text" id="keyIn" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(k)}"></div>
-    <div class="note">Crée une clé sur <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (Settings → API keys) et ajoute un peu de crédit. La clé reste uniquement sur ce téléphone : ne la partage pas.</div>
-    <div><label class="fld">Mode de reconnaissance</label><div class="seg" id="modelSeg">${Object.entries(MODELS).map(([id,o])=>`<button type="button" data-act="setModel" data-m="${id}" class="${id===m?'on':''}">${o.label}</button>`).join('')}</div><div class="sub" style="font-size:12px;margin-top:6px">Précis : plus fiable sur les cartes difficiles. Économique : plus rapide et moins cher.</div></div>
+    <div><label class="fld" for="keyIn">Clé d'API Gemini</label><input type="text" id="keyIn" autocomplete="off" spellcheck="false" placeholder="AIza…" value="${esc(k)}"></div>
+    <div class="note">Crée ta clé sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> avec ton compte Google (bouton « Create API key »), puis colle-la ici. Elle reste uniquement sur ce téléphone : ne la partage pas.</div>
+    <div><label class="fld">Mode de reconnaissance</label><div class="seg" id="modelSeg">${Object.entries(MODELS).map(([id,o])=>`<button type="button" data-act="setModel" data-m="${id}" class="${id===m?'on':''}">${o.label}</button>`).join('')}</div><div class="sub" style="font-size:12px;margin-top:6px">Précis : Gemini Flash, plus fiable. Économique : Gemini Flash-Lite, plus rapide et avec plus de scans gratuits par jour.</div></div>
     <div class="row"><button type="button" class="btn grow" data-act="testKey">Tester la clé</button><button class="btn pri grow">Enregistrer</button></div>
     <div id="testOut" class="sub"></div>
     ${k?'<button type="button" class="btn ghost danger" data-act="delKey">Supprimer la clé de ce téléphone</button>':''}
@@ -343,10 +375,10 @@ async function testKey(){
   const k=$('#keyIn').value.trim(); const out=$('#testOut'); if(!k){ out.textContent='Colle d’abord ta clé.'; return; }
   out.innerHTML='<span class="spin" style="display:inline-block;vertical-align:-4px"></span> Test…';
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:modelId(),max_tokens:5,messages:[{role:'user',content:'Réponds OK'}]})});
-    if(r.ok){ out.innerHTML='<span style="color:var(--ok)">Clé valide, tout est prêt.</span>'; }
-    else { let msg=''; try{ msg=(await r.json()).error.message; }catch(e){} out.textContent=errText(Object.assign(new Error(msg),{code:r.status})); }
-  }catch(e){ out.textContent='Pas de connexion internet.'; }
+    await discoverModels(k,true);
+    const txt=await gemini(k,[{text:'Return {"ok":true} as JSON.'}],256);
+    out.innerHTML=`<span style="color:var(--ok)">Clé valide, tout est prêt.</span> <span style="font-size:12px">(modèle : ${esc(await modelId(k))})</span>`;
+  }catch(e){ out.textContent=errText(e); }
 }
 
 /* ---------- dialogs / backup ---------- */
