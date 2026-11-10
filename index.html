@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1120">
+<title>Cotéo — scan et cote de cartes</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="logo"><img src="icons/icon.svg" alt="">Cotéo</div>
+  <div class="row" style="gap:8px">
+    <div class="chip num" id="totChip">Collection <b>0,00 €</b></div>
+    <button class="iconbtn" data-act="settings" aria-label="Réglages"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </div>
+</header>
+
+<main>
+  <section class="view on" id="v-scan">
+    <div class="stack">
+      <div id="keyNote"></div>
+      <button class="hero-scan" data-act="openCam">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="8.5" y="6.5" width="7" height="11" rx="1.2"/></svg>
+        <div><b>Scanner en direct</b><span>Cadre la carte et appuie sur le déclencheur</span></div>
+      </button>
+      <div class="row" style="justify-content:space-between">
+        <span class="link">Importer une photo<input type="file" accept="image/*" data-scan="auto"></span>
+        <button class="link" data-act="goSearch">Recherche manuelle</button>
+      </div>
+      <div>
+        <label class="fld" for="target">Ajouter dans</label>
+        <select id="target"></select>
+      </div>
+      <div id="sessBox"></div>
+      <div id="scanStatus"></div>
+      <div id="scanRes" class="stack"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-cols"></section>
+
+  <section class="view" id="v-explore">
+    <div class="sticky-search">
+      <input type="search" id="q" placeholder="Nom de carte ou numéro (ex : 025/198)" autocomplete="off">
+    </div>
+    <div id="exBody"></div>
+  </section>
+
+  <div class="foot" id="foot"></div>
+</main>
+
+<nav class="tabs">
+  <button data-tab="scan" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3.5"/></svg>Scanner</button>
+  <button data-tab="cols"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg>Collections</button>
+  <button data-tab="explore"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Explorer</button>
+</nav>
+
+<!-- live camera -->
+<div class="cam" id="cam" hidden>
+  <video id="vid" playsinline autoplay muted></video>
+  <div class="guide" id="guide"><i></i><i></i><i></i><i></i><div class="grid"></div></div>
+  <div class="camtop">
+    <button class="camicon" data-act="closeCam" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <div class="seg dark" id="camMode"><button data-act="camMode" data-m="one" class="on">Une carte</button><button data-act="camMode" data-m="page">Classeur</button></div>
+    <button class="camicon" data-act="torch" id="torchBtn" aria-label="Lampe" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></button>
+  </div>
+  <div class="camhint" id="camHint">Cadre la carte entière, numéro du bas lisible</div>
+  <div class="cambottom">
+    <div id="camLast"></div>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div class="camchip num" id="camSess">Session · 0,00 €</div>
+      <button class="shutter" data-act="shoot" aria-label="Scanner"><span></span></button>
+      <div class="camchip" id="camBusy" style="visibility:hidden"><div class="spin"></div><span>Analyse</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet"></div>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
