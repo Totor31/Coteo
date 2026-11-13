@@ -159,3 +159,16 @@ textarea{width:100%;min-height:180px;background:var(--s2);border:1px solid var(-
 .seg.dark button{white-space:nowrap}
 .scrim{z-index:54}.sheet{z-index:55}
 .cam:not([hidden]) ~ .toast{bottom:auto;top:calc(120px + env(safe-area-inset-top))}
+
+.tile img{z-index:1}
+.bigimg{display:block;margin:0 auto 14px;max-height:300px;max-width:72%;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.seg.dark button{padding:8px 11px}
+.guide.raf i{border-color:var(--ok)}
+.histwrap{position:relative;margin-top:4px}
+.histwrap svg{display:block;width:100%;height:auto;touch-action:pan-y}
+.histtip{display:none;position:absolute;top:-6px;background:#f2f3f8;color:#11142a;font-size:12px;padding:4px 8px;border-radius:8px;white-space:nowrap;pointer-events:none}
+.histtab{width:100%;border-collapse:collapse;margin-top:6px}
+.histtab td{padding:4px 0;border-bottom:1px solid var(--line)}
+.list.flat{border:0;background:none;border-radius:0}
+.list.flat .li{padding:8px 0}
+.tabs button{font-size:11px}

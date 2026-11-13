@@ -64,6 +64,8 @@ def main():
         vd = d.get("variants_detailed") or []
         v = [str(x.get("type", "")).lower() for x in vd]
         flag = (1 if "normal" in v else 0) | (2 if "reverse" in v else 0) | (4 if "holo" in v else 0)
+        if d.get("image"):
+            flag |= 8  # une image existe chez TCGdex
         cm = None
         for x in vd:
             p = (x.get("pricing") or {}).get("cardmarket")
@@ -83,7 +85,7 @@ def main():
     out = {
         "date": datetime.date.today().isoformat(),
         "sets": [[d["id"], d["name"], (d.get("cardCount") or {}).get("official"), (d.get("cardCount") or {}).get("total"),
-                  (d.get("serie") or {}).get("name"), (d.get("releaseDate") or "")[:7]] for d in sets],
+                  (d.get("serie") or {}).get("name"), (d.get("releaseDate") or "")[:7], (d.get("serie") or {}).get("id")] for d in sets],
         "rar": rar,
         "cards": cards,
     }

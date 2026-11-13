@@ -7,3 +7,5 @@ Appli web (installable sur Android) pour scanner des cartes à collectionner Pok
 - **Collections** : stockées dans le navigateur du téléphone, avec sauvegarde / restauration en fichier.
 
 Appli non officielle, non affiliée à Nintendo, Creatures, GAME FREAK ni à The Pokémon Company.
+
+Fonctions : scan carte / classeur / rafale automatique, images des cartes, annonces eBay prêtes à copier, suivi des ventes, évolution de la valeur de la collection.

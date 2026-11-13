@@ -13,7 +13,7 @@ const MODELS = {precise:{kind:'flash',fallback:'gemini-flash-latest',label:'Pré
 const GAPI='https://generativelanguage.googleapis.com/v1beta';
 
 /* ---------- local storage ---------- */
-const K = {ebay:'coteo.ebay', listed:'coteo.listed', cols:'coteo.cols', key:'coteo.geminikey', gm:'coteo.gmodels', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
+const K = {sales:'coteo.sales', hist:'coteo.hist', refAt:'coteo.refAt', ebay:'coteo.ebay', listed:'coteo.listed', cols:'coteo.cols', key:'coteo.geminikey', gm:'coteo.gmodels', model:'coteo.model', prices:'coteo.prices', target:'coteo.target'};
 function lget(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }
 function lset(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ return false; } }
 try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
@@ -25,7 +25,7 @@ function applyLive(c){ const p=LIVE[c.id]; if(p){ c.t=p.t??c.t; c.a=p.a??c.a; c.
 async function loadDB(){
   const r = await fetch('data/db.json',{cache:'no-cache'}).catch(()=>fetch('data/db.json'));
   RAW = await r.json();
-  SETS = RAW.sets.map((s,i)=>({i,id:s[0],name:s[1],off:s[2],tot:s[3],serie:s[4],date:s[5]}));
+  SETS = RAW.sets.map((s,i)=>({i,id:s[0],name:s[1],off:s[2],tot:s[3],serie:s[4],date:s[5],sid:s[6]}));
   CARDS = RAW.cards.map(r=>{ const c={id:r[0],name:r[1],num:r[2],set:SETS[r[3]],rar:RAW.rar[r[4]]||'',vf:r[5]||0,t:r[6]??null,a:r[7]??null,th:r[8]??null,ah:r[9]??null}; c.nn=norm(c.name); c.nk=normNum(c.num); applyLive(c); return c; });
   BYID = new Map(CARDS.map(c=>[c.id,c]));
   BYSET = new Map(); CARDS.forEach(c=>{ if(!BYSET.has(c.set.i)) BYSET.set(c.set.i,[]); BYSET.get(c.set.i).push(c); });
@@ -53,7 +53,7 @@ let liveT; function saveLive(){ clearTimeout(liveT); liveT=setTimeout(()=>lset(K
 
 /* ---------- collections ---------- */
 let COLS = lget(K.cols,{});
-function saveCols(){ if(!lset(K.cols,COLS)) toast('Mémoire du téléphone pleine : fais une sauvegarde.'); }
+function saveCols(){ if(!lset(K.cols,COLS)) toast('Mémoire du téléphone pleine : fais une sauvegarde.'); recordHist(); }
 function colIds(){ return Object.keys(COLS).filter(k=>COLS[k]).sort((a,b)=>(COLS[a].created||0)-(COLS[b].created||0)); }
 function ensureCol(cid){ if(!COLS[cid]) COLS[cid]={name:cid==='main'?'Ma collection':'Nouvelle collection',created:Date.now(),items:{}}; if(!COLS[cid].items) COLS[cid].items={}; return COLS[cid]; }
 function addCard(cid,id,v,q){ const col=ensureCol(cid); const k=id+'|'+v; const it=col.items[k]; col.items[k]={id,v,q:(it?it.q:0)+(q||1),t:Date.now()}; saveCols(); renderAll(); }
@@ -73,7 +73,8 @@ function rarCls(r){ const n=norm(r);
   if(/rare/.test(n)) return 't-r';
   if(/peu commune/.test(n)) return 't-u';
   return 't-c'; }
-const tile = c => `<div class="tile ${c?rarCls(c.rar):'t-c'}"><span>${c?esc(c.num):'?'}</span></div>`;
+function imgUrl(c,q){ return (c&&(c.vf&8)&&c.set.sid)?`https://assets.tcgdex.net/fr/${c.set.sid}/${c.set.id}/${encodeURIComponent(c.num)}/${q||'low'}.webp`:''; }
+const tile = c => { const u=imgUrl(c); return `<div class="tile ${c?rarCls(c.rar):'t-c'}"><span>${c?esc(c.num):'?'}</span>${u?`<img loading="lazy" decoding="async" src="${u}" alt="" onerror="this.remove()">`:''}</div>`; };
 function lev(a,b){ if(a===b) return 0; const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let p=Array.from({length:n+1},(_,i)=>i); for(let i=1;i<=m;i++){ const q=[i]; for(let j=1;j<=n;j++) q[j]=Math.min(p[j]+1,q[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1)); p=q; } return p[n]; }
 function sim(a,b){ if(!a||!b) return 0; if(a===b) return 1; if(a.includes(b)||b.includes(a)) return .85*Math.min(a.length,b.length)/Math.max(a.length,b.length)+.1; return Math.max(0,1-lev(a,b)/Math.max(a.length,b.length)); }
 
@@ -82,7 +83,7 @@ function validTarget(){ const ids=colIds(); if(!ids.length) return 'main'; retur
 function colOptions(sel){ const ids=colIds(); return (ids.length?ids:['main']).map(id=>`<option value="${esc(id)}" ${id===sel?'selected':''}>${esc(COLS[id]?COLS[id].name:'Ma collection')}</option>`).join('')+`<option value="__new">+ Nouvelle collection…</option>`; }
 
 /* ---------- render ---------- */
-function renderAll(){ if(!RAW) return; renderHeader(); renderTarget(); renderKeyNote(); if(S.tab==='cols') renderCols(); if(S.tab==='explore') renderExplore(); if(S.tab==='scan'){ renderResults(); renderSession(); } renderFoot(); renderCamSess(); }
+function renderAll(){ if(!RAW) return; renderHeader(); renderTarget(); renderKeyNote(); if(S.tab==='cols') renderCols(); if(S.tab==='explore') renderExplore(); if(S.tab==='sales') renderSales(); if(S.tab==='scan'){ renderResults(); renderSession(); } renderFoot(); renderCamSess(); }
 function renderHeader(){ let v=0; colIds().forEach(id=>v+=colStats(COLS[id]).v); $('#totChip').innerHTML=`Collection <b>${eur(v)}</b>`; }
 function renderTarget(){ S.target=validTarget(); $('#target').innerHTML=colOptions(S.target); }
 function renderFoot(){ $('#foot').innerHTML=`Base de cartes et prix Cardmarket du ${new Date(RAW.date).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}, actualisés en direct quand tu consultes une carte · données <a href="https://tcgdex.dev">TCGdex</a><br>Appli non officielle, non affiliée à Nintendo ni à The Pokémon Company.`; }
@@ -185,7 +186,7 @@ function crop(cv,box){
 function scaleCanvas(src,max){ const sc=Math.min(1,max/Math.max(src.width,src.height)); if(sc===1) return src; const c=document.createElement('canvas'); c.width=Math.round(src.width*sc); c.height=Math.round(src.height*sc); c.getContext('2d').drawImage(src,0,0,c.width,c.height); return c; }
 
 async function analyse(cv, mode){
-  S.busy++; renderBusy();
+  S.busy++; S.lastErr=null; renderBusy();
   try{
     const small=scaleCanvas(cv, mode==='one'?1100:1700);
     const b64=small.toDataURL('image/jpeg',.86).split(',')[1];
@@ -204,7 +205,7 @@ async function analyse(cv, mode){
     items.forEach(r=>{ if(r.pick) livePrice(r.pick).then(()=>{ renderResults(); renderCamLast(); }); });
     renderResults(); renderCamLast();
     return items;
-  }catch(e){ toast(errText(e)); if(e&&(e.code==='nokey'||e.code===401||e.code===403||(e.code===400&&/api key/i.test(e.message)))) setTimeout(openSettings,600); return []; }
+  }catch(e){ S.lastErr=e&&e.code; toast(errText(e)); if(e&&(e.code==='nokey'||e.code===401||e.code===403||(e.code===400&&/api key/i.test(e.message)))) setTimeout(openSettings,600); return []; }
   finally{ S.busy--; renderBusy(); }
 }
 
@@ -229,25 +230,67 @@ async function openCam(){
   $('#torchBtn').hidden=!caps.torch; TORCH=false; $('#torchBtn').classList.remove('on');
   try{ if(caps.focusMode&&caps.focusMode.includes('continuous')) await tr.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}
   setCamMode(S.camMode); renderCamLast(); renderCamSess();
+  clearInterval(RAF.timer); RAF.timer=setInterval(rafTick,250);
+  try{ if(navigator.wakeLock) WAKE=await navigator.wakeLock.request('screen'); }catch(e){ WAKE=null; }
 }
-function closeCam(){ if(STREAM){ STREAM.getTracks().forEach(t=>t.stop()); STREAM=null; } $('#vid').srcObject=null; $('#cam').hidden=true; document.body.style.overflow=''; renderAll(); }
-function setCamMode(m){ S.camMode=m; document.querySelectorAll('#camMode button').forEach(b=>b.classList.toggle('on',b.dataset.m===m)); $('#guide').classList.toggle('page',m==='page'); $('#camHint').textContent = m==='page'?'Cadre toute la page du classeur, bien à plat':'Cadre la carte entière, numéro du bas lisible'; }
-function grab(){
+function closeCam(){ clearInterval(RAF.timer); RAF.timer=null; try{ WAKE&&WAKE.release(); }catch(e){} WAKE=null; if(STREAM){ STREAM.getTracks().forEach(t=>t.stop()); STREAM=null; } $('#vid').srcObject=null; $('#cam').hidden=true; document.body.style.overflow=''; renderAll(); }
+const CAMHINT={one:'Cadre la carte entière, numéro du bas lisible',page:'Cadre toute la page du classeur, bien à plat',raf:'Pose une carte dans le cadre : elle est scannée et ajoutée toute seule'};
+function setCamMode(m){ S.camMode=m; document.querySelectorAll('#camMode button').forEach(b=>b.classList.toggle('on',b.dataset.m===m)); $('#guide').classList.toggle('page',m==='page'); $('#guide').classList.toggle('raf',m==='raf'); $('#camHint').textContent=CAMHINT[m]; RAF.sigs=[]; RAF.prev=null; RAF.stable=0; RAF.next=Date.now()+800; }
+function guideRect(margin){
   const v=$('#vid'); const vw=v.videoWidth, vh=v.videoHeight; if(!vw) return null;
   const W=v.clientWidth, H=v.clientHeight; const sc=Math.max(W/vw,H/vh); const ox=(vw*sc-W)/2, oy=(vh*sc-H)/2;
-  const g=$('#guide').getBoundingClientRect(), vr=v.getBoundingClientRect();
-  const m=S.camMode==='one'?0.10:0.04;
+  const g=$('#guide').getBoundingClientRect(), vr=v.getBoundingClientRect(); const m=margin;
   let gx=g.left-vr.left-g.width*m, gy=g.top-vr.top-g.height*m, gw=g.width*(1+2*m), gh=g.height*(1+2*m);
   let sx=(gx+ox)/sc, sy=(gy+oy)/sc, sw=gw/sc, sh=gh/sc;
   sx=Math.max(0,sx); sy=Math.max(0,sy); sw=Math.min(vw-sx,sw); sh=Math.min(vh-sy,sh);
-  const cv=document.createElement('canvas'); cv.width=Math.round(sw); cv.height=Math.round(sh);
-  cv.getContext('2d').drawImage(v,sx,sy,sw,sh,0,0,cv.width,cv.height); return cv;
+  return {v,sx,sy,sw,sh};
 }
-function shoot(){
-  const cv=grab(); if(!cv){ toast('Caméra pas prête.'); return; }
+function grab(){
+  const r=guideRect(S.camMode==='page'?0.04:0.10); if(!r) return null;
+  const cv=document.createElement('canvas'); cv.width=Math.round(r.sw); cv.height=Math.round(r.sh);
+  cv.getContext('2d').drawImage(r.v,r.sx,r.sy,r.sw,r.sh,0,0,cv.width,cv.height); return cv;
+}
+async function shoot(auto){
+  const cv=grab(); if(!cv){ if(!auto) toast('Caméra pas prête.'); return; }
   const g=$('#guide'); g.classList.remove('flash'); void g.offsetWidth; g.classList.add('flash');
   try{ navigator.vibrate && navigator.vibrate(30); }catch(e){}
-  analyse(cv,S.camMode);
+  const raf=S.camMode==='raf';
+  const items=await analyse(cv, S.camMode==='page'?'page':'one');
+  if(!raf) return;
+  if(S.lastErr===429) RAF.next=Date.now()+30000;
+  const r=items[0]; if(!r) return;
+  const dup = r.pick && RAF.lastId===r.pick+'|'+r.v;
+  if(r.pick && !r.amb && !dup){
+    RAF.lastId=r.pick+'|'+r.v; addResult(r); renderResults(); renderSession(); renderCamLast(); renderCamSess();
+    try{ navigator.vibrate && navigator.vibrate([40,60,40]); }catch(e){}
+  } else {
+    if(dup) r.dup=true; renderCamLast();
+    try{ navigator.vibrate && navigator.vibrate(250); }catch(e){}
+  }
+}
+/* rafale : déclenche tout seul quand une nouvelle carte est posée et immobile */
+const RAF={timer:null,prev:null,stable:0,sigs:[],next:0,lastId:null,cv:null};
+let WAKE=null;
+function sigNow(){
+  const r=guideRect(0); if(!r) return null;
+  const cv=RAF.cv||(RAF.cv=document.createElement('canvas')); cv.width=24; cv.height=32;
+  const ctx=cv.getContext('2d',{willReadFrequently:true}); ctx.drawImage(r.v,r.sx,r.sy,r.sw,r.sh,0,0,24,32);
+  const d=ctx.getImageData(0,0,24,32).data; const out=new Float32Array(768); let mean=0;
+  for(let i=0;i<768;i++){ const l=0.3*d[i*4]+0.59*d[i*4+1]+0.11*d[i*4+2]; out[i]=l; mean+=l; }
+  mean/=768; for(let i=0;i<768;i++) out[i]-=mean; return out;
+}
+function sdiff(a,b){ let t=0; for(let i=0;i<768;i++) t+=Math.abs(a[i]-b[i]); return t/768; }
+function rafTick(){
+  if(S.camMode!=='raf'||$('#cam').hidden) return;
+  const s=sigNow(); if(!s) return;
+  const mv=RAF.prev?sdiff(s,RAF.prev):99; RAF.prev=s; RAF.stable = mv<5 ? RAF.stable+1 : 0;
+  const hint=$('#camHint'); const now=Date.now();
+  if(S.busy){ hint.textContent='Analyse…'; return; }
+  if(S.lastErr===429 && now<RAF.next){ hint.textContent='Limite gratuite atteinte : pause de quelques secondes…'; return; }
+  if(RAF.stable<3){ hint.textContent=CAMHINT.raf; return; }
+  if(RAF.sigs.some(x=>sdiff(x,s)<14)){ hint.textContent='Carte déjà scannée : pose la suivante'; return; }
+  if(now<RAF.next) return;
+  RAF.sigs.push(s); if(RAF.sigs.length>6) RAF.sigs.shift(); RAF.next=now+4000; shoot(true);
 }
 function renderBusy(){ const b=$('#camBusy'); if(b) b.style.visibility=S.busy?'visible':'hidden'; const st=$('#scanStatus'); if(st) st.innerHTML=S.busy&&$('#cam').hidden?`<div class="card row"><div class="spin"></div><div>Analyse de la photo…</div></div>`:''; }
 function renderCamSess(){ const el=$('#camSess'); if(el) el.textContent='Session · '+eur(S.session.v); }
@@ -256,7 +299,7 @@ function renderCamLast(){
   const items=S.results.filter(r=>r.batch===S.lastBatch); if(!items.length){ el.innerHTML=''; return; }
   if(items.length===1){
     const r=items[0]; const c=r.pick?BYID.get(r.pick):null;
-    el.innerHTML = `<div class="lastcard"><img src="${r.thumb}" alt=""><div class="grow"><div class="t1 ell" style="font-weight:700">${c?esc(c.name):esc(r.d.name_fr||r.d.name_printed||'Carte inconnue')}</div><div class="sub ell">${c?`${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')}`:'Pas trouvée dans la base'}</div>${r.amb&&c?'<span class="badge warn">À vérifier</span>':''}</div>${c?`<div class="price num" style="font-size:17px">${eur(price(c,r.v))}<small>${VLAB[r.v]}</small></div>`:''}${r.state==='new'&&c?`<button class="btn pri sm" data-act="resAdd" data-k="${r.k}">Ajouter</button>`:r.state==='added'?'<span class="badge ok">Ajoutée</span>':`<button class="btn sm" data-act="camToList">Voir</button>`}</div>`;
+    el.innerHTML = `<div class="lastcard"><img src="${r.thumb}" alt=""><div class="grow"><div class="t1 ell" style="font-weight:700">${c?esc(c.name):esc(r.d.name_fr||r.d.name_printed||'Carte inconnue')}</div><div class="sub ell">${c?`${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')}`:'Pas trouvée dans la base'}</div>${r.dup&&c?'<span class="badge warn">Doublon ?</span>':(r.amb&&c?'<span class="badge warn">À vérifier</span>':'')}</div>${c?`<div class="price num" style="font-size:17px">${eur(price(c,r.v))}<small>${VLAB[r.v]}</small></div>`:''}${r.state==='new'&&c?`<button class="btn pri sm" data-act="resAdd" data-k="${r.k}">Ajouter</button>`:r.state==='added'?'<span class="badge ok">Ajoutée</span>':`<button class="btn sm" data-act="camToList">Voir</button>`}</div>`;
   } else {
     const ok=items.filter(r=>r.pick); const tot=ok.reduce((s,r)=>s+(price(BYID.get(r.pick),r.v)||0),0); const pend=ok.filter(r=>r.state==='new');
     el.innerHTML = `<div class="lastcard"><div class="grow"><div class="t1" style="font-weight:700">${items.length} cartes détectées</div><div class="sub num">${ok.length} reconnues · ${eur(tot)}</div></div><button class="btn sm" data-act="camToList">Détails</button>${pend.length?`<button class="btn pri sm" data-act="addBatch">Tout ajouter</button>`:'<span class="badge ok">Ajoutées</span>'}</div>`;
@@ -295,10 +338,12 @@ function renderCols(){
   if(!S.col){
     const ids=colIds(); let tv=0,tn=0; ids.forEach(id=>{ const s=colStats(COLS[id]); tv+=s.v; tn+=s.n; });
     el.innerHTML=`<h2>Collections</h2><div class="hero"><div class="sub">Valeur totale</div><div class="v num">${eur(tv)}</div><div class="sub num">${tn} carte${tn>1?'s':''} · ${ids.length} collection${ids.length>1?'s':''}</div></div>
+    ${histBlock()}${moversBlock()}
     <div class="stack" style="margin-top:12px">${ids.length?ids.map(id=>{ const c=COLS[id], s=colStats(c); return `<button class="colcard" data-act="openCol" data-id="${esc(id)}"><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9aa1ba" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></div><div class="grow"><div class="ell" style="font-weight:700">${esc(c.name)}</div><div class="sub num">${s.n} carte${s.n>1?'s':''}</div></div><div class="val num">${eur(s.v)}</div></button>`; }).join(''):`<div class="empty">Aucune carte pour l'instant.<br>Scanne ta première carte pour démarrer.</div>`}
     <button class="btn" style="width:100%" data-act="newCol">+ Nouvelle collection</button>
     <div class="row"><button class="btn grow" data-act="backup">Sauvegarder</button><label class="btn grow" style="position:relative;overflow:hidden">Restaurer<input type="file" accept="application/json,.json" id="restoreIn" style="position:absolute;inset:0;opacity:0"></label></div>
     <div class="note">Tes collections sont gardées sur ce téléphone, dans Chrome. Fais une sauvegarde de temps en temps (fichier à garder ou à envoyer sur un autre téléphone).</div></div>`;
+    bindHist();
     return;
   }
   const col=COLS[S.col], s=colStats(col), so=S.sort;
@@ -313,7 +358,7 @@ async function refreshCol(){
   const ids=[...new Set(Object.values(COLS[S.col].items||{}).map(it=>it.id))]; if(!ids.length) return;
   toast('Actualisation de '+ids.length+' prix…'); let i=0;
   const worker=async()=>{ while(i<ids.length){ const id=ids[i++]; await livePrice(id,true); } };
-  await Promise.all([worker(),worker(),worker(),worker()]); lset(K.prices,LIVE); renderAll(); toast('Prix à jour');
+  await Promise.all([worker(),worker(),worker(),worker()]); lset(K.prices,LIVE); recordHist(); renderAll(); toast('Prix à jour');
 }
 
 /* ---------- explore ---------- */
@@ -344,14 +389,15 @@ let SH={};
 function openCard(id,v){ const c=BYID.get(id); if(!c) return; const vs=variants(c); SH={id,v:vs.includes(v)?v:vs[0],q:1,col:validTarget()}; renderCardSheet(); livePrice(id).then(()=>{ if($('#sheet').classList.contains('on')&&SH.id===id) renderCardSheet(true); }); }
 function renderCardSheet(keep){
   const c=BYID.get(SH.id), vs=variants(c), own=ownedMap().get(c.id)||0;
-  const html=`<div class="row" style="align-items:flex-start">${tile(c)}<div class="grow"><div style="font-size:20px;font-weight:800">${esc(c.name)}</div><div class="sub">${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')}</div><div class="sub">${esc(c.set.serie)} · ${esc(c.rar||'—')}${own?` · <span style="color:var(--ok)">${own} possédée${own>1?'s':''}</span>`:''}</div></div></div>
+  const big=imgUrl(c,'high');
+  const html=`${big?`<img class="bigimg" src="${big}" alt="${esc(c.name)}" onerror="this.remove()">`:''}<div class="row" style="align-items:flex-start">${big?'':tile(c)}<div class="grow"><div style="font-size:20px;font-weight:800">${esc(c.name)}</div><div class="sub">${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')}</div><div class="sub">${esc(c.set.serie)} · ${esc(c.rar||'—')}${own?` · <span style="color:var(--ok)">${own} possédée${own>1?'s':''}</span>`:''}</div></div></div>
   <div class="ptab num" style="margin-top:14px"><div><small>Tendance</small><b>${eur(c.t)}</b></div><div><small>Moy. 30 jours</small><b>${eur(c.a)}</b></div><div><small>Reverse</small><b>${(c.vf&2)?eur(c.th??c.ah):'—'}</b></div></div>
   <div class="sub" style="margin-top:6px;font-size:12px">${c.pd?'Prix Cardmarket actualisés à '+new Date(c.pd).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'Prix Cardmarket du '+new Date(RAW.date).toLocaleDateString('fr-FR')}</div>
   <div class="stack" style="margin-top:12px">
     ${vs.length>1?`<div class="seg">${vs.map(v=>`<button data-act="shV" data-v="${v}" class="${v===SH.v?'on':''}">${VLAB[v]}</button>`).join('')}</div>`:''}
     <div class="row"><div class="grow"><label class="fld" for="shCol">Collection</label><select id="shCol">${colOptions(SH.col)}</select></div><div><label class="fld">Quantité</label><div class="step"><button data-act="shQ" data-d="-1">−</button><span class="num">${SH.q}</span><button data-act="shQ" data-d="1">+</button></div></div></div>
     <button class="btn pri" style="width:100%" data-act="shAdd">Ajouter · ${eur((price(c,SH.v)||0)*SH.q)}</button>
-    <button class="btn" style="width:100%" data-act="ebay">Créer l'annonce eBay${LISTED[c.id+'|'+SH.v]?` <span class="badge ok">préparée à ${eur(LISTED[c.id+'|'+SH.v].p)}</span>`:''}</button>
+    <button class="btn" style="width:100%" data-act="ebay">Créer l'annonce eBay${LISTED[c.id+'|'+SH.v]?` <span class="badge ok">en vente à ${eur(LISTED[c.id+'|'+SH.v].p)}</span>`:''}</button>
     <a class="btn ghost" style="width:100%;text-decoration:none;color:var(--tx)" target="_blank" rel="noopener" href="https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name)}">Voir sur Cardmarket</a>
   </div>`;
   if(keep){ const top=$('#sheet').scrollTop; $('#sheet').innerHTML='<div class="grab"></div>'+html; $('#sheet').scrollTop=top; } else openSheet(html);
@@ -419,8 +465,99 @@ function ebReadPrice(){ const el=$('#ebPrice'); if(!el) return; const v=parseFlo
 function ebText(w){ const c=BYID.get(EB.id); ebReadPrice(); const t=ebTitle(c,EB.v,EB.lang), d=ebDesc(c,EB.v,EB), sp=ebSpecs(c,EB.v,EB).map(([k,v])=>k+' : '+v).join('\n');
   if(w==='title') return t; if(w==='desc') return d; if(w==='specs') return sp;
   return `TITRE\n${t}\n\nPRIX\n${EB.p.toFixed(2).replace('.',',')} €\n\nDESCRIPTION\n${d}\n\nCARACTÉRISTIQUES\n${sp}`; }
-function ebRemember(){ ebReadPrice(); LISTED[EB.id+'|'+EB.v]={p:EB.p,cond:EB.cond,lang:EB.lang,at:Date.now()}; lset(K.listed,LISTED); }
+function ebRemember(){ ebReadPrice(); const k=EB.id+'|'+EB.v; LISTED[k]={p:EB.p,cond:EB.cond,lang:EB.lang,at:(LISTED[k]&&LISTED[k].at)||Date.now()}; lset(K.listed,LISTED); }
 async function copyText(txt,label){ try{ await navigator.clipboard.writeText(txt); toast(label+' copié'+(label==='Tout'?'':'')); return true; }catch(e){ openSheet(`<div style="font-weight:800;margin-bottom:8px">Copie manuelle</div><textarea readonly>${esc(txt)}</textarea><button class="btn" style="width:100%;margin-top:10px" data-act="close">Fermer</button>`); return false; } }
+
+/* ---------- suivi des ventes ---------- */
+let SALES=lget(K.sales,[]);
+const fmtDay=t=>new Date(t).toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'});
+function holders(k){ return colIds().filter(id=>COLS[id].items&&COLS[id].items[k]); }
+function renderSales(){
+  const el=$('#v-sales'); if(!el) return;
+  const act=Object.entries(LISTED).map(([k,L])=>({k,L,c:BYID.get(k.split('|')[0]),v:k.split('|')[1]})).filter(x=>x.c).sort((a,b)=>(b.L.at||0)-(a.L.at||0));
+  const sold=SALES.map((x,i)=>({i,x,c:BYID.get(x.id)})).filter(x=>x.c).sort((a,b)=>b.x.at-a.x.at);
+  const tA=act.reduce((s,x)=>s+x.L.p,0), tS=sold.reduce((s,x)=>s+x.x.p,0);
+  el.innerHTML=`<h2>Ventes eBay</h2>
+  <div class="ptab num" style="grid-template-columns:1fr 1fr"><div><small>En vente · ${act.length} carte${act.length>1?'s':''}</small><b>${eur(tA)}</b></div><div><small>Vendues · ${sold.length} carte${sold.length>1?'s':''}</small><b style="color:var(--ok)">${eur(tS)}</b></div></div>
+  <div class="sub" style="font-size:12px;margin-top:6px">Total encaissé avant frais eBay et frais d'envoi.</div>
+  <div class="serie">En vente</div>
+  ${act.length?`<div class="list">${act.map(x=>`<div class="li"><button data-act="card" data-id="${esc(x.c.id)}" data-v="${x.v}" class="row grow" style="text-align:left">${tile(x.c)}<div class="grow"><div class="t1 ell">${esc(x.c.name)}</div><div class="t2 ell">${esc(x.c.set.name)} · ${esc(x.c.num)} · ${VLAB[x.v]||''}</div><div class="t2">depuis le ${fmtDay(x.L.at)}</div></div></button><div style="text-align:right"><div class="price num" style="margin-bottom:6px">${eur(x.L.p)}</div><button class="btn sm" data-act="saleSold" data-k="${esc(x.k)}">Vendue ?</button></div></div>`).join('')}</div>`:`<div class="empty">Aucune annonce en cours.<br>Ouvre une carte puis « Créer l'annonce eBay ».</div>`}
+  <div class="serie">Vendues</div>
+  ${sold.length?`<div class="list">${sold.map(x=>`<div class="li">${tile(x.c)}<div class="grow"><div class="t1 ell">${esc(x.c.name)}</div><div class="t2 ell">${esc(x.c.set.name)} · ${esc(x.c.num)} · ${VLAB[x.x.v]||''}</div><div class="t2">vendue le ${fmtDay(x.x.at)}</div></div><div style="text-align:right"><div class="price num" style="color:var(--ok);margin-bottom:6px">${eur(x.x.p)}</div><button class="btn sm ghost" data-act="saleDel" data-i="${x.i}">Annuler</button></div></div>`).join('')}</div>`:`<div class="empty">Aucune vente enregistrée.</div>`}`;
+}
+function openSold(k){
+  const L=LISTED[k]; if(!L) return; const c=BYID.get(k.split('|')[0]); const h=holders(k);
+  openSheet(`<div style="font-size:19px;font-weight:800">${esc(c.name)}</div><div class="sub" style="margin-bottom:12px">${esc(c.set.name)} · ${esc(c.num)}/${esc(c.set.off||'?')} · en vente à ${eur(L.p)}</div>
+  <form id="soldForm" class="stack"><div><label class="fld" for="soldP">Prix de vente réel (€)</label><input type="text" inputmode="decimal" id="soldP" value="${L.p.toFixed(2).replace('.',',')}"></div>
+  ${h.length?`<label class="row" style="gap:10px"><input type="checkbox" id="soldRm" checked style="width:20px;height:20px"><span>Retirer 1 exemplaire de « ${esc(COLS[h[0]].name)} »</span></label>`:''}
+  <button class="btn pri" style="width:100%">Marquer comme vendue</button>
+  <button type="button" class="btn danger" style="width:100%" data-act="saleDrop" data-k="${esc(k)}">Retirer l'annonce (pas vendue)</button>
+  <button type="button" class="btn ghost" style="width:100%" data-act="close">Fermer</button></form>`);
+  $('#soldForm').addEventListener('submit',e=>{ e.preventDefault();
+    const p=parseFloat($('#soldP').value.replace(/\s|€/g,'').replace(',','.')); if(!isFinite(p)||p<0){ toast('Prix invalide.'); return; }
+    const [id,v]=k.split('|'); SALES.push({id,v,p:Math.round(p*100)/100,at:Date.now()}); lset(K.sales,SALES); delete LISTED[k]; lset(K.listed,LISTED);
+    const rm=$('#soldRm'); const doRm=rm&&rm.checked&&h.length; closeSheet();
+    if(doRm){ const it=COLS[h[0]].items[k]; setQty(h[0],k,it.q-1); } else renderAll();
+    toast('Vente enregistrée'); });
+}
+
+/* ---------- évolution de la valeur ---------- */
+let HIST=lget(K.hist,[]);
+function dayKey(t){ const d=t?new Date(t):new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function recordHist(){
+  if(!RAW) return; let v=0,n=0; colIds().forEach(id=>{ const s=colStats(COLS[id]); v+=s.v; n+=s.n; }); v=Math.round(v*100)/100;
+  const d=dayKey(), last=HIST[HIST.length-1];
+  if(last&&last.d===d){ if(last.v===v&&last.n===n) return; last.v=v; last.n=n; }
+  else { if(!n&&!HIST.length) return; HIST.push({d,v,n}); }
+  if(HIST.length>1000) HIST=HIST.slice(-1000); lset(K.hist,HIST);
+}
+async function dailyRefresh(){
+  if(navigator.onLine===false || Date.now()-lget(K.refAt,0)<20*3600e3) return;
+  const ids=[...ownedMap().keys()].slice(0,500); if(!ids.length) return;
+  let i=0; const w=async()=>{ while(i<ids.length) await livePrice(ids[i++]); };
+  await Promise.all([w(),w(),w(),w()]); lset(K.prices,LIVE); lset(K.refAt,Date.now()); recordHist(); renderAll();
+}
+function histPts(){ const r=S.hr||'all'; if(r==='all') return HIST; const cut=dayKey(Date.now()-(+r)*864e5); return HIST.filter(p=>p.d>=cut); }
+const dLab=d=>new Date(d+'T12:00:00').toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+const HG={W:340,H:150,l:6,r:6,t:14,b:22};
+function histGeom(pts){
+  const t=pts.map(p=>new Date(p.d+'T12:00:00').getTime()); const t0=t[0], t1=t[t.length-1]||t0+1;
+  let lo=Math.min(...pts.map(p=>p.v)), hi=Math.max(...pts.map(p=>p.v)); if(hi-lo<1){ hi+=1; lo=Math.max(0,lo-1); } const pad=(hi-lo)*0.12; lo=Math.max(0,lo-pad); hi+=pad;
+  const x=i=>HG.l+(t1===t0?0.5:(t[i]-t0)/(t1-t0))*(HG.W-HG.l-HG.r), y=v=>HG.t+(1-(v-lo)/(hi-lo))*(HG.H-HG.t-HG.b);
+  return {x,y,lo,hi};
+}
+function histBlock(){
+  if(!HIST.length) return '';
+  const pts=histPts(); const seg=`<div class="seg" style="width:190px">${[['30','30 j'],['90','90 j'],['all','Tout']].map(([v,l])=>`<button data-act="histRange" data-r="${v}" class="${(S.hr||'all')===v?'on':''}">${l}</button>`).join('')}</div>`;
+  let body;
+  if(pts.length<2){ body=`<div class="note" style="margin-top:10px">Le suivi a démarré le ${dLab(HIST[0].d)}. La valeur est relevée chaque jour où tu ouvres l'appli : la courbe apparaît dès le deuxième relevé.</div>`; }
+  else {
+    const g=histGeom(pts), a=pts[0], z=pts[pts.length-1], diff=z.v-a.v, pct=a.v>0?diff/a.v*100:null;
+    const path=pts.map((p,i)=>(i?'L':'M')+g.x(i).toFixed(1)+' '+g.y(p.v).toFixed(1)).join(' ');
+    const grid=[0,0.5,1].map(f=>{ const v=g.lo+(g.hi-g.lo)*f, yy=g.y(v).toFixed(1); return `<line x1="${HG.l}" x2="${HG.W-HG.r}" y1="${yy}" y2="${yy}" stroke="#2c3250" stroke-width="1"/><text x="${HG.l}" y="${yy-4}" fill="#9aa1ba" font-size="10" stroke="#171b2e" stroke-width="3" paint-order="stroke">${esc(eur(v))}</text>`; }).join('');
+    body=`<div class="num" style="margin:10px 0 2px;font-weight:700;color:${diff>0?'var(--ok)':diff<0?'var(--red)':'var(--mu)'}">${diff>0?'▲ +':diff<0?'▼ ':'= '}${eur(diff)}${pct!=null?` (${pct>0?'+':''}${pct.toFixed(1).replace('.',',')} %)`:''} <span class="sub" style="font-weight:400">depuis le ${dLab(a.d)}</span></div>
+    <div class="histwrap"><svg id="histSvg" viewBox="0 0 ${HG.W} ${HG.H}" role="img" aria-label="Valeur de la collection dans le temps">${grid}<path d="${path}" fill="none" stroke="#ffcb3d" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${pts.length<=40?pts.map((p,i)=>`<circle cx="${g.x(i).toFixed(1)}" cy="${g.y(p.v).toFixed(1)}" r="2.5" fill="#ffcb3d"/>`).join(''):''}<g id="histCur" style="display:none"><line id="histLine" y1="${HG.t}" y2="${HG.H-HG.b}" stroke="#9aa1ba" stroke-width="1"/><circle id="histDot" r="5" fill="#ffcb3d" stroke="#171b2e" stroke-width="2"/></g><text x="${HG.l}" y="${HG.H-6}" fill="#9aa1ba" font-size="11">${esc(dLab(a.d))}</text><text x="${HG.W-HG.r}" y="${HG.H-6}" fill="#9aa1ba" font-size="11" text-anchor="end">${esc(dLab(z.d))}</text></svg><div class="histtip num" id="histTip"></div></div>
+    <details class="sub" style="margin-top:6px"><summary>Voir les relevés</summary><table class="histtab num">${pts.slice(-30).reverse().map(p=>`<tr><td>${esc(dLab(p.d))}</td><td>${p.n} cartes</td><td style="text-align:right">${eur(p.v)}</td></tr>`).join('')}</table></details>`;
+  }
+  return `<div class="card" style="margin-top:12px"><div class="row" style="justify-content:space-between"><div style="font-weight:700">Évolution de la valeur</div>${HIST.length>1?seg:''}</div>${body}</div>`;
+}
+function bindHist(){
+  const svg=$('#histSvg'); if(!svg) return; const pts=histPts(); if(pts.length<2) return; const g=histGeom(pts);
+  const move=e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)/r.width*HG.W; let bi=0,bd=1e9; pts.forEach((p,i)=>{ const d=Math.abs(g.x(i)-px); if(d<bd){ bd=d; bi=i; } });
+    const cx=g.x(bi), cy=g.y(pts[bi].v); $('#histCur').style.display=''; $('#histLine').setAttribute('x1',cx); $('#histLine').setAttribute('x2',cx); $('#histDot').setAttribute('cx',cx); $('#histDot').setAttribute('cy',cy);
+    const tip=$('#histTip'); tip.innerHTML=`<b>${eur(pts[bi].v)}</b> · ${esc(dLab(pts[bi].d))} · ${pts[bi].n} cartes`; tip.style.display='block'; const tw=tip.offsetWidth, left=Math.min(Math.max(0,cx/HG.W*r.width-tw/2), r.width-tw); tip.style.left=left+'px'; };
+  const out=()=>{ $('#histCur').style.display='none'; $('#histTip').style.display='none'; };
+  svg.addEventListener('pointerdown',move); svg.addEventListener('pointermove',move); svg.addEventListener('pointerleave',out);
+}
+function moversBlock(){
+  const seen=new Map();
+  colIds().forEach(id=>Object.values(COLS[id].items||{}).forEach(it=>{ const c=BYID.get(it.id); if(!c) return; const now=it.v==='R'?c.th:c.t, avg=it.v==='R'?c.ah:c.a; if(now==null||avg==null||avg<1) return; const k=it.id+'|'+it.v; if(!seen.has(k)) seen.set(k,{c,v:it.v,now,pct:(now-avg)/avg*100}); }));
+  const all=[...seen.values()].filter(x=>Math.abs(x.pct)>=3);
+  const up=all.filter(x=>x.pct>0).sort((a,b)=>b.pct-a.pct).slice(0,3), down=all.filter(x=>x.pct<0).sort((a,b)=>a.pct-b.pct).slice(0,3);
+  if(!up.length&&!down.length) return '';
+  const row=x=>`<button class="li" data-act="card" data-id="${esc(x.c.id)}" data-v="${x.v}">${tile(x.c)}<div class="grow"><div class="t1 ell">${esc(x.c.name)}</div><div class="t2 ell">${esc(x.c.set.name)} · ${esc(x.c.num)}</div></div><div class="price num">${eur(x.now)}<small style="color:${x.pct>0?'var(--ok)':'var(--red)'};font-weight:700;font-size:12px">${x.pct>0?'▲ +':'▼ '}${x.pct.toFixed(0)} %</small></div></button>`;
+  return `<div class="card" style="margin-top:12px;padding-bottom:6px"><div style="font-weight:700">Cartes qui bougent</div><div class="sub" style="font-size:12px;margin-bottom:8px">Prix actuel comparé à la moyenne des 30 derniers jours (Cardmarket).</div>${up.length?`<div class="sub" style="font-size:12px;font-weight:700">En hausse</div><div class="list flat">${up.map(row).join('')}</div>`:''}${down.length?`<div class="sub" style="font-size:12px;font-weight:700;margin-top:8px">En baisse</div><div class="list flat">${down.map(row).join('')}</div>`:''}</div>`;
+}
 
 /* ---------- settings ---------- */
 function openSettings(){
@@ -462,12 +599,15 @@ function askName(title,val,cb){
 function newCol(after){ askName('Nouvelle collection','',name=>{ const id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); COLS[id]={name,created:Date.now(),items:{}}; saveCols(); S.target=id; lset(K.target,id); renderAll(); if(after) after(id); toast('Collection créée'); }); }
 function listText(col){ const s=colStats(col); return `${col.name} — ${s.n} cartes — ${eur(s.v)}\n\n`+Object.values(col.items||{}).map(it=>({it,c:BYID.get(it.id)})).filter(x=>x.c).sort((a,b)=>(price(b.c,b.it.v)||0)-(price(a.c,a.it.v)||0)).map(x=>`${x.it.q} × ${x.c.name} — ${x.c.set.name} ${x.c.num}/${x.c.set.off||'?'} (${VLAB[x.it.v]}) — ${eur(price(x.c,x.it.v))}`).join('\n'); }
 function backup(){
-  const blob=new Blob([JSON.stringify({app:'coteo',v:1,date:new Date().toISOString(),cols:COLS},null,1)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({app:'coteo',v:2,date:new Date().toISOString(),cols:COLS,listed:LISTED,sales:SALES,hist:HIST},null,1)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='coteo-sauvegarde-'+new Date().toISOString().slice(0,10)+'.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
 }
 function restore(file){
   const r=new FileReader(); r.onload=()=>{ try{ const d=JSON.parse(r.result); if(!d||!d.cols) throw 0;
     let n=0; Object.entries(d.cols).forEach(([id,c])=>{ if(!c||!c.items) return; if(COLS[id]){ Object.entries(c.items).forEach(([k,it])=>{ const cur=COLS[id].items[k]; if(!cur||(it.t||0)>(cur.t||0)) COLS[id].items[k]=it; }); } else COLS[id]=c; n++; });
+    if(d.listed){ Object.entries(d.listed).forEach(([k,L])=>{ if(!LISTED[k]) LISTED[k]=L; }); lset(K.listed,LISTED); }
+    if(Array.isArray(d.sales)){ const have=new Set(SALES.map(x=>x.id+x.v+x.at)); d.sales.forEach(x=>{ if(x&&!have.has(x.id+x.v+x.at)) SALES.push(x); }); lset(K.sales,SALES); }
+    if(Array.isArray(d.hist)){ const m=new Map(d.hist.filter(p=>p&&p.d).map(p=>[p.d,p])); HIST.forEach(p=>m.set(p.d,p)); HIST=[...m.values()].sort((a,b)=>a.d.localeCompare(b.d)); lset(K.hist,HIST); }
     saveCols(); renderAll(); toast(n+' collection'+(n>1?'s':'')+' restaurée'+(n>1?'s':'')); }catch(e){ toast('Fichier de sauvegarde invalide.'); } };
   r.readAsText(file);
 }
@@ -491,6 +631,10 @@ document.addEventListener('click',e=>{
   switch(a){
     case 'close': closeSheet(); break;
     case 'ebay': openEbay(); break;
+    case 'saleSold': openSold(k); break;
+    case 'saleDrop': delete LISTED[k]; lset(K.listed,LISTED); closeSheet(); renderAll(); toast('Annonce retirée'); break;
+    case 'saleDel': SALES.splice(+b.dataset.i,1); lset(K.sales,SALES); renderAll(); toast('Vente annulée'); break;
+    case 'histRange': S.hr=b.dataset.r; renderCols(); break;
     case 'ebReset': EB.touched=false; EB.p=ebSuggest(BYID.get(EB.id),EB.v); renderEbay(true); break;
     case 'ebCopy': { const w=b.dataset.w; copyText(ebText(w),{title:'Titre',desc:'Description',specs:'Caractéristiques',all:'Tout'}[w]); ebRemember(); break; }
     case 'ebOpen': ebRemember(); window.open(b.href,'_blank','noopener'); break;
@@ -502,7 +646,7 @@ document.addEventListener('click',e=>{
     case 'closeCam': closeCam(); break;
     case 'camMode': setCamMode(b.dataset.m); break;
     case 'torch': { const tr=STREAM&&STREAM.getVideoTracks()[0]; if(tr){ TORCH=!TORCH; tr.applyConstraints({advanced:[{torch:TORCH}]}).catch(()=>{}); b.classList.toggle('on',TORCH); } break; }
-    case 'shoot': shoot(); break;
+    case 'shoot': shoot(false); break;
     case 'camToList': closeCam(); setTab('scan'); break;
     case 'addBatch': { const p=S.results.filter(r=>r.batch===S.lastBatch&&r.state==='new'&&r.pick); p.forEach(addResult); renderCamLast(); renderCamSess(); toast(p.length+' cartes ajoutées'); break; }
     case 'goSearch': setTab('explore'); setTimeout(()=>$('#q').focus(),50); break;
@@ -536,10 +680,10 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('visibilitychange',()=>{ if(document.hidden && STREAM) closeCam(); });
-function setTab(t){ S.tab=t; document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('on',x.dataset.tab===t)); ['scan','cols','explore'].forEach(v=>$('#v-'+v).classList.toggle('on',v===t)); window.scrollTo(0,0); renderAll(); }
+function setTab(t){ S.tab=t; document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('on',x.dataset.tab===t)); ['scan','cols','sales','explore'].forEach(v=>$('#v-'+v).classList.toggle('on',v===t)); window.scrollTo(0,0); renderAll(); }
 
 /* ---------- start ---------- */
 $('#scanRes').innerHTML='<div class="card row"><div class="spin"></div><div>Chargement de la base de cartes…</div></div>';
-loadDB().then(renderAll).catch(()=>{ $('#scanRes').innerHTML='<div class="note warn">Impossible de charger la base de cartes. Vérifie ta connexion puis recharge la page.</div>'; });
+loadDB().then(()=>{ recordHist(); renderAll(); dailyRefresh(); }).catch(()=>{ $('#scanRes').innerHTML='<div class="note warn">Impossible de charger la base de cartes. Vérifie ta connexion puis recharge la page.</div>'; });
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 })();
